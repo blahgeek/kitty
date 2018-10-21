@@ -830,9 +830,9 @@ is_ascii_control_char(char x) {
             // cmd+a will result in the text a.
             [self interpretKeyEvents:[NSArray arrayWithObject:event]];
             debug_key(@"char_count: %lu cocoa text: %s\n", char_count, format_text(_glfw.ns.text));
-            GLFWbool cocoa_wants_to_insert_text = !is_ascii_control_char(_glfw.ns.text[0]);
-            _glfw.ns.text[0] = 0;
-            if (char_count && cocoa_wants_to_insert_text) convert_utf16_to_utf8(text, char_count, _glfw.ns.text, sizeof(_glfw.ns.text));
+            /* GLFWbool cocoa_wants_to_insert_text = !is_ascii_control_char(_glfw.ns.text[0]); */
+            /* _glfw.ns.text[0] = 0; */
+            /* if (char_count && cocoa_wants_to_insert_text) convert_utf16_to_utf8(text, char_count, _glfw.ns.text, sizeof(_glfw.ns.text)); */
         } else {
             window->ns.deadKeyState = 0;
         }
