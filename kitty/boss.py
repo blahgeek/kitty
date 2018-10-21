@@ -19,10 +19,11 @@ from .constants import (
 )
 from .fast_data_types import (
     ChildMonitor, background_opacity_of, change_background_opacity,
-    create_os_window, current_os_window, destroy_global_data,
-    get_clipboard_string, glfw_post_empty_event, global_font_size,
-    mark_os_window_for_close, os_window_font_size, patch_global_colors,
-    set_clipboard_string, set_in_sequence_mode, toggle_fullscreen
+    change_os_window_state, create_os_window, current_os_window,
+    destroy_global_data, get_clipboard_string, glfw_post_empty_event,
+    global_font_size, mark_os_window_for_close, os_window_font_size,
+    patch_global_colors, set_clipboard_string, set_in_sequence_mode,
+    toggle_fullscreen
 )
 from .keys import get_shortcut, shortcut_matches
 from .layout import set_draw_minimal_borders
@@ -45,6 +46,27 @@ def listen_on(spec):
     s.bind(address)
     s.listen()
     return s.fileno()
+
+
+def data_for_at(w, arg):
+    if arg == '@selection':
+        return w.text_for_selection()
+    if arg == '@ansi':
+        return w.as_text(as_ansi=True, add_history=True)
+    if arg == '@text':
+        return w.as_text(add_history=True)
+    if arg == '@screen':
+        return w.as_text()
+    if arg == '@ansi_screen':
+        return w.as_text(as_ansi=True)
+    if arg == '@alternate':
+        return w.as_text(alternate_screen=True)
+    if arg == '@alternate_scrollback':
+        return w.as_text(alternate_screen=True, add_history=True)
+    if arg == '@ansi_alternate':
+        return w.as_text(as_ansi=True, alternate_screen=True)
+    if arg == '@ansi_alternate_scrollback':
+        return w.as_text(as_ansi=True, alternate_screen=True, add_history=True)
 
 
 class DumpCommands:  # {{{
@@ -103,8 +125,11 @@ class Boss:
         if new_os_window_trigger is not None:
             self.keymap.pop(new_os_window_trigger, None)
         self.add_os_window(startup_session, os_window_id=os_window_id)
-        if args.start_in_fullscreen:
-            self.toggle_fullscreen()
+        if args.start_as != 'normal':
+            if args.start_as == 'fullscreen':
+                self.toggle_fullscreen()
+            else:
+                change_os_window_state(args.start_as)
 
     def add_os_window(self, startup_session, os_window_id=None, wclass=None, wname=None, opts_for_size=None, startup_id=None):
         if os_window_id is None:
@@ -215,8 +240,15 @@ class Boss:
     def new_os_window(self, *args):
         self._new_os_window(args)
 
-    def new_os_window_with_cwd(self, *args):
+    @property
+    def active_window_for_cwd(self):
         w = self.active_window
+        if w is not None and w.overlay_for is not None and w.overlay_for in self.window_id_map:
+            w = self.window_id_map[w.overlay_for]
+        return w
+
+    def new_os_window_with_cwd(self, *args):
+        w = self.active_window_for_cwd
         cwd_from = w.child.pid if w is not None else None
         self._new_os_window(args, cwd_from)
 
@@ -520,6 +552,8 @@ class Boss:
         if key_action is not None:
             f = getattr(self, key_action.func, None)
             if f is not None:
+                if self.args.debug_keyboard:
+                    print('Keypress matched action:', f.__name__)
                 passthrough = f(*key_action.args)
                 if passthrough is not True:
                     return True
@@ -533,6 +567,8 @@ class Boss:
             f = getattr(tab, key_action.func, getattr(window, key_action.func, None))
             if f is not None:
                 passthrough = f(*key_action.args)
+                if self.args.debug_keyboard:
+                    print('Keypress matched action:', f.__name__)
                 if passthrough is not True:
                     return True
         return False
@@ -610,17 +646,20 @@ class Boss:
         return output
 
     def _run_kitten(self, kitten, args=(), input_data=None, window=None):
+        orig_args, args = list(args), list(args)
+        from kittens.runner import create_kitten_handler
+        end_kitten = create_kitten_handler(kitten, orig_args)
         if window is None:
             w = self.active_window
             tab = self.active_tab
         else:
             w = window
             tab = w.tabref()
+        if end_kitten.no_ui:
+            end_kitten(None, getattr(w, 'id', None), self)
+            return
 
         if w is not None and tab is not None and w.overlay_for is None:
-            orig_args, args = list(args), list(args)
-            from kittens.runner import create_kitten_handler
-            end_kitten = create_kitten_handler(kitten, orig_args)
             args[0:0] = [config_dir, kitten]
             if input_data is None:
                 type_of_input = end_kitten.type_of_input
@@ -770,25 +809,54 @@ class Boss:
         if tm is not None:
             tm.next_tab(-1)
 
+    prev_tab = previous_tab
+
+    def special_window_for_cmd(self, cmd, window=None, stdin=None, cwd_from=None, as_overlay=False):
+        w = window or self.active_window
+        if stdin:
+            stdin = data_for_at(w, stdin)
+            if stdin is not None:
+                stdin = stdin.encode('utf-8')
+        cmdline = []
+        for arg in cmd:
+            if arg == '@selection':
+                arg = data_for_at(w, arg)
+                if not arg:
+                    continue
+            cmdline.append(arg)
+        overlay_for = w.id if as_overlay and w.overlay_for is None else None
+        return SpecialWindow(cmd, stdin, cwd_from=cwd_from, overlay_for=overlay_for)
+
+    def pipe(self, source, dest, exe, *args):
+        cmd = [exe] + list(args)
+        window = self.active_window
+        cwd_from = window.child.pid if window else None
+
+        def create_window():
+            return self.special_window_for_cmd(
+                cmd, stdin=source, as_overlay=dest == 'overlay', cwd_from=cwd_from)
+
+        if dest == 'overlay' or dest == 'window':
+            tab = self.active_tab
+            if tab is not None:
+                return tab.new_special_window(create_window())
+        elif dest == 'tab':
+            tm = self.active_tab_manager
+            if tm is not None:
+                tm.new_tab(special_window=create_window(), cwd_from=cwd_from)
+        elif dest == 'os_window':
+            self._new_os_window(create_window(), cwd_from=cwd_from)
+        else:
+            import subprocess
+            subprocess.Popen(cmd)
+
     def args_to_special_window(self, args, cwd_from=None):
         args = list(args)
         stdin = None
         w = self.active_window
 
-        def data_for_at(arg):
-            if arg == '@selection':
-                return w.text_for_selection()
-            if arg == '@ansi':
-                return w.as_text(as_ansi=True, add_history=True)
-            if arg == '@text':
-                return w.as_text(add_history=True)
-            if arg == '@screen':
-                return w.as_text()
-            if arg == '@ansi_screen':
-                return w.as_text(as_ansi=True)
-
         if args[0].startswith('@') and args[0] != '@':
-            stdin = data_for_at(args[0]) or None
+            stdin = data_for_at(w, args[0]) or None
             if stdin is not None:
                 stdin = stdin.encode('utf-8')
             del args[0]
@@ -796,13 +864,13 @@ class Boss:
         cmd = []
         for arg in args:
             if arg == '@selection':
-                arg = data_for_at(arg)
+                arg = data_for_at(w, arg)
                 if not arg:
                     continue
             cmd.append(arg)
         return SpecialWindow(cmd, stdin, cwd_from=cwd_from)
 
-    def _new_tab(self, args, cwd_from=None):
+    def _new_tab(self, args, cwd_from=None, as_neighbor=False):
         special_window = None
         if args:
             if isinstance(args, SpecialWindowInstance):
@@ -811,15 +879,22 @@ class Boss:
                 special_window = self.args_to_special_window(args, cwd_from=cwd_from)
         tm = self.active_tab_manager
         if tm is not None:
-            return tm.new_tab(special_window=special_window, cwd_from=cwd_from)
+            return tm.new_tab(special_window=special_window, cwd_from=cwd_from, as_neighbor=as_neighbor)
+
+    def _create_tab(self, args, cwd_from=None):
+        as_neighbor = False
+        if args and args[0].startswith('!'):
+            as_neighbor = 'neighbor' in args[0][1:].split(',')
+            args = args[1:]
+        self._new_tab(args, as_neighbor=as_neighbor, cwd_from=cwd_from)
 
     def new_tab(self, *args):
-        self._new_tab(args)
+        self._create_tab(args)
 
     def new_tab_with_cwd(self, *args):
-        w = self.active_window
+        w = self.active_window_for_cwd
         cwd_from = w.child.pid if w is not None else None
-        self._new_tab(args, cwd_from=cwd_from)
+        self._create_tab(args, cwd_from=cwd_from)
 
     def _new_window(self, args, cwd_from=None):
         tab = self.active_tab
@@ -833,7 +908,7 @@ class Boss:
         self._new_window(args)
 
     def new_window_with_cwd(self, *args):
-        w = self.active_window
+        w = self.active_window_for_cwd
         if w is None:
             return self.new_window(*args)
         cwd_from = w.child.pid if w is not None else None

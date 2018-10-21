@@ -284,10 +284,6 @@ string_capabilities = {
     'setrgbb': r'\E[48:2:%p1%d:%p2%d:%p3%dm',
 
     # The following are entries that we don't use
-    # # display status line
-    # 'dsl': r'\E]2;\007',
-    # # return from status line
-    # 'fsl': r'^G',
     # # turn on blank mode, (characters invisible)
     # 'invis': r'\E[8m',
     # # init2 string
@@ -468,7 +464,7 @@ def get_capabilities(query_string):
     try:
         for q in query_string.split(';'):
             name = qname = unhexlify(q).decode('utf-8')
-            if name == 'TN':
+            if name in ('TN', 'name'):
                 val = names[0]
             else:
                 try:

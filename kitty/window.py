@@ -436,13 +436,19 @@ class Window:
             self.screen.reset_callbacks()
         self.screen = None
 
-    def as_text(self, as_ansi=False, add_history=False, add_wrap_markers=False):
+    def as_text(self, as_ansi=False, add_history=False, add_pager_history=False, add_wrap_markers=False, alternate_screen=False):
         lines = []
-        add_history = add_history and not self.screen.is_using_alternate_linebuf()
-        f = self.screen.as_text_non_visual if add_history else self.screen.as_text
+        add_history = add_history and not (self.screen.is_using_alternate_linebuf() ^ alternate_screen)
+        if alternate_screen:
+            f = self.screen.as_text_alternate
+        else:
+            f = self.screen.as_text_non_visual if add_history else self.screen.as_text
         f(lines.append, as_ansi, add_wrap_markers)
         if add_history:
             h = []
+            if add_pager_history:
+                # assert as_ansi and add_wrap_markers?
+                self.screen.historybuf.pagerhist_as_text(h.append)
             self.screen.historybuf.as_text(h.append, as_ansi, add_wrap_markers)
             lines = h + lines
         return ''.join(lines)
@@ -458,7 +464,7 @@ class Window:
     # actions {{{
 
     def show_scrollback(self):
-        data = self.as_text(as_ansi=True, add_history=True, add_wrap_markers=True)
+        data = self.as_text(as_ansi=True, add_history=True, add_pager_history=True, add_wrap_markers=True)
         data = data.replace('\r\n', '\n').replace('\r', '\n')
         lines = data.count('\n')
         input_line_number = (lines - (self.screen.lines - 1) - self.screen.scrolled_by)
@@ -475,6 +481,10 @@ class Window:
                     if len(text) == len(new_text):
                         break
                     text = new_text
+            else:
+                # Workaround for broken editors like nano that cannot handle
+                # newlines in pasted text see https://github.com/kovidgoyal/kitty/issues/994
+                text = b'\r'.join(text.splitlines())
             self.screen.paste(text)
 
     def copy_to_clipboard(self):

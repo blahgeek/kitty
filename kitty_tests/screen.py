@@ -229,7 +229,7 @@ class TestScreen(BaseTest):
         s.backspace()
         s.draw(' ')
         s.backspace()
-        self.ae(s.cursor.x, 0)
+        self.ae(s.cursor.x, 1)
 
     def test_resize(self):
         s = self.create_screen(scrollback=6)
@@ -441,4 +441,4 @@ class TestScreen(BaseTest):
             return ''.join(d)
 
         self.ae(as_text(), 'ababababab\nc\n\n')
-        self.ae(as_text(True), '\x1b[0mababa\x1b[0mbabab\n\x1b[0mc\n\n')
+        self.ae(as_text(True), 'ababababab\nc\n\n')

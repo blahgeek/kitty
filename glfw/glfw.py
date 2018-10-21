@@ -22,7 +22,7 @@ def wayland_protocol_file_name(base, ext='c'):
     return 'wayland-{}-client-protocol.{}'.format(base, ext)
 
 
-def init_env(env, pkg_config, at_least_version, module='x11'):
+def init_env(env, pkg_config, at_least_version, test_compile, module='x11'):
     ans = env.copy()
     ans.cflags = [
         x for x in ans.cflags
@@ -32,10 +32,11 @@ def init_env(env, pkg_config, at_least_version, module='x11'):
         ans.cflags.append('-pthread')
         ans.ldpaths.append('-pthread')
     ans.cflags.append('-fpic')
-    ans.cflags.append('-D_GLFW_' + module.upper())
-    ans.cflags.append('-D_GLFW_BUILD_DLL')
+    ans.cppflags.append('-D_GLFW_' + module.upper())
+    ans.cppflags.append('-D_GLFW_BUILD_DLL')
 
     if is_macos:
+        ans.cppflags.append('-DGL_SILENCE_DEPRECATION')
         ans.ldpaths.extend(
             "-framework Cocoa -framework IOKit -framework CoreFoundation -framework CoreVideo".
             split()
@@ -76,6 +77,14 @@ def init_env(env, pkg_config, at_least_version, module='x11'):
         for dep in 'wayland-egl wayland-client wayland-cursor xkbcommon dbus-1'.split():
             ans.cflags.extend(pkg_config(dep, '--cflags-only-I'))
             ans.ldpaths.extend(pkg_config(dep, '--libs'))
+        has_memfd_create = test_compile(env.cc, '-Werror', src='''#define _GNU_SOURCE
+    #include <unistd.h>
+    #include <sys/syscall.h>
+    int main(void) {
+        return syscall(__NR_memfd_create, "test", 0);
+    }''')
+        if has_memfd_create:
+            ans.cppflags.append('-DHAS_MEMFD_CREATE')
 
     return ans
 
@@ -192,8 +201,10 @@ def generate_wrappers(glfw_header, glfw_native_header):
         functions.append(Function(decl))
     for line in '''\
     void* glfwGetCocoaWindow(GLFWwindow* window)
+    void* glfwGetNSGLContext(GLFWwindow *window)
     uint32_t glfwGetCocoaMonitor(GLFWmonitor* monitor)
     GLFWcocoatextinputfilterfun glfwSetCocoaTextInputFilter(GLFWwindow* window, GLFWcocoatextinputfilterfun callback)
+    GLFWcocoatogglefullscreenfun glfwSetCocoaToggleFullscreenIntercept(GLFWwindow *window, GLFWcocoatogglefullscreenfun callback)
     GLFWapplicationshouldhandlereopenfun glfwSetApplicationShouldHandleReopen(GLFWapplicationshouldhandlereopenfun callback)
     void glfwGetCocoaKeyEquivalent(int glfw_key, int glfw_mods, void* cocoa_key, void* cocoa_mods)
     void* glfwGetX11Display(void)
@@ -213,10 +224,12 @@ def generate_wrappers(glfw_header, glfw_native_header):
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-typedef int (* GLFWcocoatextinputfilterfun)(int,int,unsigned int);
-typedef int (* GLFWapplicationshouldhandlereopenfun)(int);
 
 {}
+
+typedef int (* GLFWcocoatextinputfilterfun)(int,int,unsigned int);
+typedef int (* GLFWapplicationshouldhandlereopenfun)(int);
+typedef int (* GLFWcocoatogglefullscreenfun)(GLFWwindow*);
 
 {}
 

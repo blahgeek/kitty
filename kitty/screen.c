@@ -107,7 +107,7 @@ new(PyTypeObject *type, PyObject *args, PyObject UNUSED *kwds) {
         self->color_profile = alloc_color_profile();
         self->main_linebuf = alloc_linebuf(lines, columns); self->alt_linebuf = alloc_linebuf(lines, columns);
         self->linebuf = self->main_linebuf;
-        self->historybuf = alloc_historybuf(MAX(scrollback, lines), columns);
+        self->historybuf = alloc_historybuf(MAX(scrollback, lines), columns, OPT(scrollback_pager_history_size));
         self->main_grman = grman_alloc();
         self->alt_grman = grman_alloc();
         self->grman = self->main_grman;
@@ -165,8 +165,9 @@ screen_dirty_sprite_positions(Screen *self) {
 
 static inline HistoryBuf*
 realloc_hb(HistoryBuf *old, unsigned int lines, unsigned int columns) {
-    HistoryBuf *ans = alloc_historybuf(lines, columns);
+    HistoryBuf *ans = alloc_historybuf(lines, columns, 0);
     if (ans == NULL) { PyErr_NoMemory(); return NULL; }
+    ans->pagerhist = old->pagerhist; old->pagerhist = NULL;
     historybuf_rewrap(old, ans);
     return ans;
 }
@@ -708,15 +709,7 @@ screen_is_cursor_visible(Screen *self) {
 
 void
 screen_backspace(Screen *self) {
-    unsigned int amount = 1;
-    if (self->cursor->x < self->columns && self->cursor->x > 1) {
-        // check if previous character is a wide character
-        linebuf_init_line(self->linebuf, self->cursor->y);
-        unsigned int xpos = self->cursor->x - 2;
-        GPUCell *gpu_cell = self->linebuf->line->gpu_cells + xpos;
-        if ((gpu_cell->attrs & WIDTH_MASK) == 2) amount = 2;
-    }
-    screen_cursor_back(self, amount, -1);
+    screen_cursor_back(self, 1, -1);
 }
 
 void
@@ -1413,7 +1406,6 @@ screen_request_capabilities(Screen *self, char c, PyObject *q) {
     static char buf[128];
     int shape = 0;
     const char *query;
-    Cursor blank_cursor = {{0}};
     switch(c) {
         case '+':
             CALLBACK("request_capabilities", "O", q);
@@ -1437,7 +1429,7 @@ screen_request_capabilities(Screen *self, char c, PyObject *q) {
                 shape = snprintf(buf, sizeof(buf), "1$r%d q", shape);
             } else if (strcmp("m", query) == 0) {
                 // SGR
-                shape = snprintf(buf, sizeof(buf), "1$r%sm", cursor_as_sgr(self->cursor, &blank_cursor));
+                shape = snprintf(buf, sizeof(buf), "1$r%sm", cursor_as_sgr(self->cursor));
             } else if (strcmp("r", query) == 0) {
                 shape = snprintf(buf, sizeof(buf), "1$r%u;%ur", self->margin_top + 1, self->margin_bottom + 1);
             } else {
@@ -1691,6 +1683,21 @@ static PyObject*
 as_text_non_visual(Screen *self, PyObject *args) {
     as_text_generic(args, self, range_line_, self->lines, self->columns);
 }
+
+static inline PyObject*
+as_text_generic_wrapper(Screen *self, PyObject *args, Line*(get_line)(Screen *, int)) {
+    as_text_generic(args, self, get_line, self->lines, self->columns);
+}
+
+static PyObject*
+as_text_alternate(Screen *self, PyObject *args) {
+    LineBuf *original = self->linebuf;
+    self->linebuf = original == self->main_linebuf ? self->alt_linebuf : self->main_linebuf;
+    PyObject *ans = as_text_generic_wrapper(self, args, range_line_);
+    self->linebuf = original;
+    return ans;
+}
+
 
 static PyObject*
 screen_wcswidth(PyObject UNUSED *self, PyObject *str) {
@@ -2141,7 +2148,7 @@ COUNT_WRAP(cursor_forward)
 
 static PyObject*
 wcwidth_wrap(PyObject UNUSED *self, PyObject *chr) {
-    return PyLong_FromUnsignedLong(wcwidth_std(PyLong_AsLong(chr)));
+    return PyLong_FromLong(wcwidth_std(PyLong_AsLong(chr)));
 }
 
 
@@ -2177,6 +2184,7 @@ static PyMethodDef methods[] = {
     MND(set_pending_timeout, METH_O)
     MND(as_text, METH_VARARGS)
     MND(as_text_non_visual, METH_VARARGS)
+    MND(as_text_alternate, METH_VARARGS)
     MND(tab, METH_NOARGS)
     MND(backspace, METH_NOARGS)
     MND(linefeed, METH_NOARGS)

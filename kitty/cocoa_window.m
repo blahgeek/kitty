@@ -100,6 +100,12 @@ cocoa_set_new_window_trigger(PyObject *self UNUSED, PyObject *args) {
 }
 
 void
+cocoa_update_nsgl_context(void* id) {
+    NSOpenGLContext *ctx = id;
+    [ctx update];
+}
+
+void
 cocoa_create_global_menu(void) {
     NSString* app_name = find_app_name();
     NSMenu* bar = [[NSMenu alloc] init];
@@ -222,6 +228,29 @@ void
 cocoa_focus_window(void *w) {
     NSWindow *window = (NSWindow*)w;
     [window makeKeyWindow];
+}
+
+bool
+cocoa_toggle_fullscreen(void *w, bool traditional) {
+    NSWindow *window = (NSWindow*)w;
+    bool made_fullscreen = true;
+    NSWindowStyleMask sm = [window styleMask];
+    bool in_fullscreen = sm & NSWindowStyleMaskFullScreen;
+    if (traditional) {
+        if (!(in_fullscreen)) {
+            sm |= NSWindowStyleMaskBorderless | NSWindowStyleMaskFullScreen;
+            [[NSApplication sharedApplication] setPresentationOptions: NSApplicationPresentationAutoHideMenuBar | NSApplicationPresentationAutoHideDock];
+        } else {
+            made_fullscreen = false;
+            sm &= ~(NSWindowStyleMaskBorderless | NSWindowStyleMaskFullScreen);
+            [[NSApplication sharedApplication] setPresentationOptions: NSApplicationPresentationDefault];
+        }
+        [window setStyleMask: sm];
+    } else {
+        if (in_fullscreen) made_fullscreen = false;
+        [window toggleFullScreen: nil];
+    }
+    return made_fullscreen;
 }
 
 static PyObject*

@@ -140,13 +140,19 @@ For example::
     'shortcuts.tab': [
             _('Tab management'), '',
             _('''\
-You can also create shortcuts to go to specific tabs, with 1 being the first tab::
+You can also create shortcuts to go to specific tabs, with 1 being the first
+tab, 2 the second tab and -1 being the previously active tab::
 
     map ctrl+alt+1 goto_tab 1
     map ctrl+alt+2 goto_tab 2
 
 Just as with :code:`new_window` above, you can also pass the name of arbitrary
-commands to run when using new_tab and use :code:`new_tab_with_cwd`.
+commands to run when using new_tab and use :code:`new_tab_with_cwd`. Finally,
+if you want the new tab to open next to the current tab rather than at the
+end of the tabs list, use::
+
+    map ctrl+t new_tab !neighbor [optional cmd to run]
+
 ''')],
     'shortcuts.layout': [
             _('Layout management'), '',
@@ -318,10 +324,15 @@ def scrollback_lines(x):
     return x
 
 
+def scrollback_pager_history_size(x):
+    ans = int(max(0, float(x)) * 1024 * 1024)
+    return min(ans, 4096 * 1024 * 1024 - 1)
+
+
 o('scrollback_lines', 2000, option_type=scrollback_lines, long_text=_('''
 Number of lines of history to keep in memory for scrolling back. Memory is allocated
 on demand. Negative numbers are (effectively) infinite scrollback. Note that using
-very large scrollback is not recommended a it can slow down resizing of the terminal
+very large scrollback is not recommended as it can slow down resizing of the terminal
 and also use large amounts of RAM.'''))
 
 o('scrollback_pager', 'less --chop-long-lines --RAW-CONTROL-CHARS +INPUT_LINE_NUMBER', option_type=to_cmdline, long_text=_('''
@@ -330,6 +341,14 @@ passed as STDIN to this program. If you change it, make sure the program you
 use can handle ANSI escape sequences for colors and text formatting.
 INPUT_LINE_NUMBER in the command line above will be replaced by an integer
 representing which line should be at the top of the screen.'''))
+
+o('scrollback_pager_history_size', 0, option_type=scrollback_pager_history_size, long_text=_('''
+Separate scrollback history size, used only for browsing the scrollback buffer (in MB).
+This separate buffer is not available for interactive scrolling but will be
+piped to the pager program when viewing scrollback buffer in a separate window.
+The current implementation stores one character in 4 bytes, so approximatively
+2500 lines per megabyte at 100 chars per line. A value of zero or less disables
+this feature. The maximum allowed size is 4GB.'''))
 
 o('wheel_scroll_multiplier', 5.0, long_text=_('''
 Modify the amount scrolled by the mouse wheel. Note this is only used for low
@@ -685,7 +704,7 @@ Specify environment variables to set in all child processes. Note that
 environment variables are expanded recursively, so if you use::
 
     env MYVAR1=a
-    env MYVAR2=${MYVAR}/${HOME}/b
+    env MYVAR2=${MYVAR1}/${HOME}/b
 
 The value of MYVAR2 will be :code:`a/<path to home directory>/b`.
 '''))
@@ -719,9 +738,13 @@ program, even one running on a remote server via SSH can read your clipboard.
 '''))
 
 o('term', 'xterm-kitty', long_text=_('''
-The value of the TERM environment variable to set. Changing this can break
-many terminal programs, only change it if you know what you are doing, not
-because you read some advice on Stack Overflow to change it.
+The value of the TERM environment variable to set. Changing this can break many
+terminal programs, only change it if you know what you are doing, not because
+you read some advice on Stack Overflow to change it. The TERM variable if used
+by various programs to get information about the capabilities and behavior of
+the terminal. If you change it, depending on what programs you run, and how
+different the terminal you are changing it to is, various things from
+key-presses, to colors, to various advanced features may not work.
 '''))
 
 # }}}
@@ -779,6 +802,23 @@ o('macos_window_resizable', True, long_text=_('''
 Disable this if you want kitty top-level (OS) windows to not be resizable
 on macOS.
 '''))
+
+o('macos_thicken_font', 0, option_type=positive_float, long_text=_('''
+Draw an extra border around the font with the given width, to increase
+legibility at small font sizes. For example, a value of 0.75 will
+result in rendering that looks similar to sub-pixel antialiasing at
+common font sizes.
+'''))
+
+o('macos_traditional_fullscreen', False, long_text=_('''
+Use the traditional full-screen transition, that is faster, but less pretty.
+'''))
+
+# Disabled by default because of https://github.com/kovidgoyal/kitty/issues/794
+o('macos_custom_beam_cursor', False, long_text=_('''
+Enable/disable custom mouse cursor for macOS that is easier to see on both
+light and dark backgrounds. WARNING: this might make your mouse cursor
+invisible on dual GPU machines.'''))
 # }}}
 
 g('shortcuts')  # {{{
@@ -825,13 +865,26 @@ k('scroll_page_down', 'kitty_mod+page_down', 'scroll_page_down', _('Scroll page 
 k('scroll_home', 'kitty_mod+home', 'scroll_home', _('Scroll to top'))
 k('scroll_end', 'kitty_mod+end', 'scroll_end', _('Scroll to bottom'))
 k('show_scrollback', 'kitty_mod+h', 'show_scrollback', _('Browse scrollback buffer in less'), long_text=_('''
-You can send the contents of the current screen + history buffer as stdin to an arbitrary program using
-the placeholders @text (which is the plain text) and @ansi (which includes text styling escape codes).
-For only the current screen, use @screen or @ansi_screen.
-For example, the following command opens the scrollback buffer in less in a new window::
 
-    map kitty_mod+y new_window @ansi less +G -R
-'''))
+You can pipe the contents of the current screen + history buffer as
+:file:`STDIN` to an arbitrary program using the ``pipe`` function. For example,
+the following opens the scrollback buffer in less in an overlay window::
+
+    map f1 pipe @ansi overlay less +G -R
+
+Placeholders available are: ``@text`` (which is plain text) and ``@ansi`` (which
+includes text styling escape codes). For only the current screen, use ``@screen``
+or ``@ansi_screen``. For the secondary screen, use ``@alternate`` and ``@ansi_alternate``.
+The secondary screen is the screen not currently displayed. For
+example if you run a fullscreen terminal application, the secondary screen will
+be the screen you return to when quitting the application. If you want access to the
+secondary screen scrollback, use ``@alternate_scrollback``. You can also use
+``none`` for no :file:`STDIN` input.
+
+To open in a new window, tab or new OS window, use ``window``, ``tab``, or
+``os_window`` respectively. You can also use ``none`` in which case the data
+will be piped into the program without creating any windows, useful if the
+program is a GUI program that creates its own windows. '''))
 
 
 # }}}

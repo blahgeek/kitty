@@ -160,6 +160,13 @@ windows and move windows around (similar to window movement in vim)::
    map shift+down move_window up
    ...
 
+You can also define a shortcut to switch to the previously active window::
+
+   map ctrl+p nth_window -1
+
+``nth_window`` will focus the nth window for positive numbers and the
+previously active windows for negative numbers.
+
 
 Other keyboard shortcuts
 ----------------------------------
@@ -173,7 +180,8 @@ Paste from selection                :sc:`paste_from_selection`
 Increase font size                  :sc:`increase_font_size`
 Decrease font size                  :sc:`decrease_font_size`
 Restore font size                   :sc:`reset_font_size`
-Toggle fullscreen                   :sc:`toggle_fullscreen`
+Toggle fullscreen                   :sc:`toggle_fullscreen` (also :kbd:`^⌘+f` on macOS)
+on
 Input unicode character             :sc:`input_unicode_character`
 Click URL using the keyboard        :sc:`open_url`
 Reset the terminal                  :sc:`reset_terminal`
@@ -264,6 +272,8 @@ Some prominent kittens:
 :doc:`Clipboard <kittens/clipboard>`
     Copy/paste to the clipboard from shell scripts, even over SSH.
 
+You can also :doc:`Learn to create your own kittens <kittens/custom>`.
+
 
 Configuring kitty
 -------------------
@@ -272,7 +282,6 @@ Configuring kitty
 painting frames-per-second. For details and a sample :file:`kitty.conf`,
 see the :doc:`configuration docs <conf>`.
 
-.. _sessions:
 
 Remote control
 ------------------
@@ -282,6 +291,8 @@ Remote control
 fonts, open new windows, tabs, set their titles, change window layout, get text
 from one window and send text to another, etc, etc. The possibilities are
 endless. See the :doc:`tutorial <remote-control>` to get started.
+
+.. _sessions:
 
 Startup Sessions
 ------------------
@@ -358,6 +369,17 @@ scrollback buffer in your favorite pager program (which is ``less`` by default).
 Colors and text formatting are preserved. You can explore the scrollback buffer
 comfortably within the pager.
 
+Additionally, you can pipe the contents of the scrollback buffer to an
+arbitrary, command running in a new window, tab or overlay, for example::
+
+   map f1 pipe @ansi window less +G -R
+
+Would open the scrollback buffer in a new window when you press the :kbd:`F1`
+key. See :sc:`show_scrollback` for details.
+
+If you wish to store very large amounts of scrollback to view using the piping or
+:sc:`show_scrollback` features, you can use the :opt:`scrollback_pager_history_size`
+option.
 
 Frequently Asked Questions
 ---------------------------------

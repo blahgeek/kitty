@@ -50,6 +50,11 @@
  #define NSEventTypeKeyUp NSKeyUp
 #endif
 
+#if (MAC_OS_X_VERSION_MAX_ALLOWED < 101400)
+ #define NSPasteboardTypeFileURL NSFilenamesPboardType
+ #define NSBitmapFormatAlphaNonpremultiplied NSAlphaNonpremultipliedBitmapFormat
+ #define NSPasteboardTypeString NSStringPboardType
+#endif
 
 // Returns the style mask corresponding to the window settings
 //
@@ -550,7 +555,7 @@ static GLFWapplicationshouldhandlereopenfun handle_reopen_callback = NULL;
 
         [self updateTrackingAreas];
         [self registerForDraggedTypes:[NSArray arrayWithObjects:
-                                       NSFilenamesPboardType, nil]];
+                                       NSPasteboardTypeFileURL, nil]];
     }
 
     return self;
@@ -561,6 +566,10 @@ static GLFWapplicationshouldhandlereopenfun handle_reopen_callback = NULL;
     [trackingArea release];
     [markedText release];
     [super dealloc];
+}
+
+- (_GLFWwindow*)glfwWindow {
+    return window;
 }
 
 - (BOOL)isOpaque
@@ -908,17 +917,24 @@ is_ascii_control_char(char x) {
     return YES;
 }
 
+- (NSArray *)fileURLWithDraggingInfo:(id <NSDraggingInfo>)sender
+{
+    NSPasteboard *pasteboard = [sender draggingPasteboard];
+    NSDictionary *options = [NSDictionary dictionaryWithObject:@YES forKey:NSPasteboardURLReadingFileURLsOnlyKey];
+    NSArray *results = [pasteboard readObjectsForClasses:[NSArray arrayWithObject:[NSURL class]] options:options];
+    return results;
+}
+
 - (BOOL)performDragOperation:(id <NSDraggingInfo>)sender
 {
-    NSPasteboard* pasteboard = [sender draggingPasteboard];
-    NSArray* files = [pasteboard propertyListForType:NSFilenamesPboardType];
-
     const NSRect contentRect = [window->ns.view frame];
     _glfwInputCursorPos(window,
                         [sender draggingLocation].x,
                         contentRect.size.height - [sender draggingLocation].y);
-
+    const NSArray* files = [self fileURLWithDraggingInfo:sender];
+    if (!files) return NO;
     const NSUInteger count = [files count];
+
     if (count)
     {
         NSEnumerator* e = [files objectEnumerator];
@@ -926,7 +942,7 @@ is_ascii_control_char(char x) {
         NSUInteger i;
 
         for (i = 0;  i < count;  i++)
-            paths[i] = _glfw_strdup([[e nextObject] UTF8String]);
+            paths[i] = _glfw_strdup([[[e nextObject] path] UTF8String]);
 
         _glfwInputDrop(window, (int) count, (const char**) paths);
 
@@ -1038,6 +1054,18 @@ is_ascii_control_char(char x) {
 - (BOOL)canBecomeMainWindow
 {
     return YES;
+}
+
+- (void)toggleFullScreen:(nullable id)sender
+{
+    GLFWContentView *view = [self contentView];
+    if (view)
+    {
+        _GLFWwindow *window = [view glfwWindow];
+        if (window && window->ns.toggleFullscreenCallback && window->ns.toggleFullscreenCallback((GLFWwindow*)window) == 1)
+            return;
+    }
+    [super toggleFullScreen:sender];
 }
 
 @end
@@ -1924,7 +1952,7 @@ int _glfwPlatformCreateCursor(_GLFWcursor* cursor,
                             hasAlpha:YES
                             isPlanar:NO
                     colorSpaceName:NSCalibratedRGBColorSpace
-                        bitmapFormat:NSAlphaNonpremultipliedBitmapFormat
+                        bitmapFormat:NSBitmapFormatAlphaNonpremultiplied
                         bytesPerRow:src->width * 4
                         bitsPerPixel:32];
         if (rep == nil)
@@ -1986,26 +2014,26 @@ void _glfwPlatformSetCursor(_GLFWwindow* window, _GLFWcursor* cursor)
 
 void _glfwPlatformSetClipboardString(const char* string)
 {
-    NSArray* types = [NSArray arrayWithObjects:NSStringPboardType, nil];
+    NSArray* types = [NSArray arrayWithObjects:NSPasteboardTypeString, nil];
 
     NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
     [pasteboard declareTypes:types owner:nil];
     [pasteboard setString:[NSString stringWithUTF8String:string]
-                  forType:NSStringPboardType];
+                  forType:NSPasteboardTypeString];
 }
 
 const char* _glfwPlatformGetClipboardString(void)
 {
     NSPasteboard* pasteboard = [NSPasteboard generalPasteboard];
 
-    if (![[pasteboard types] containsObject:NSStringPboardType])
+    if (![[pasteboard types] containsObject:NSPasteboardTypeString])
     {
         _glfwInputError(GLFW_FORMAT_UNAVAILABLE,
                         "Cocoa: Failed to retrieve string from pasteboard");
         return NULL;
     }
 
-    NSString* object = [pasteboard stringForType:NSStringPboardType];
+    NSString* object = [pasteboard stringForType:NSPasteboardTypeString];
     if (!object)
     {
         _glfwInputError(GLFW_PLATFORM_ERROR,
@@ -2111,6 +2139,14 @@ GLFWAPI GLFWcocoatextinputfilterfun glfwSetCocoaTextInputFilter(GLFWwindow *hand
     _GLFW_REQUIRE_INIT_OR_RETURN(nil);
     GLFWcocoatextinputfilterfun previous = window->ns.textInputFilterCallback;
     window->ns.textInputFilterCallback = callback;
+    return previous;
+}
+
+GLFWAPI GLFWcocoatogglefullscreenfun glfwSetCocoaToggleFullscreenIntercept(GLFWwindow *handle, GLFWcocoatogglefullscreenfun callback) {
+    _GLFWwindow* window = (_GLFWwindow*) handle;
+    _GLFW_REQUIRE_INIT_OR_RETURN(nil);
+    GLFWcocoatogglefullscreenfun previous = window->ns.toggleFullscreenCallback;
+    window->ns.toggleFullscreenCallback = callback;
     return previous;
 }
 

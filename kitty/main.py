@@ -120,11 +120,12 @@ def get_new_os_window_trigger(opts):
 
 def _run_app(opts, args):
     new_os_window_trigger = get_new_os_window_trigger(opts)
-    if False and is_macos:
-        # This is disabled because using custom cursors fails
-        # on dual GPU machines: https://github.com/kovidgoyal/kitty/issues/794
+    if is_macos and opts.macos_custom_beam_cursor:
         set_custom_ibeam_cursor()
     load_all_shaders.cursor_text_color = opts.cursor_text_color
+    if not is_wayland and not is_macos:  # no window icons on wayland
+        with open(logo_data_file, 'rb') as f:
+            set_default_window_icon(f.read(), 256, 256)
     with cached_values_for(run_app.cached_values_name) as cached_values:
         with startup_notification_handler(extra_callback=run_app.first_window_callback) as pre_show_callback:
             window_id = create_os_window(
@@ -132,9 +133,6 @@ def _run_app(opts, args):
                     pre_show_callback,
                     appname, args.name or args.cls or appname,
                     args.cls or appname, load_all_shaders)
-        if not is_wayland and not is_macos:  # no window icons on wayland
-            with open(logo_data_file, 'rb') as f:
-                set_default_window_icon(f.read(), 256, 256)
         boss = Boss(window_id, opts, args, cached_values, new_os_window_trigger)
         boss.start()
         try:
