@@ -819,7 +819,8 @@ is_ascii_control_char(char x) {
     const GLFWbool process_text = !window->ns.textInputFilterCallback || window->ns.textInputFilterCallback(key, mods, scancode, flags) != 1;
     const bool previous_has_marked_text = [self hasMarkedText];
     [self unmarkText];
-    _glfw.ns.text[0] = 0;
+    // do not reset now, only reset after actually calling _glfwInputKeyboard
+    /* _glfw.ns.text[0] = 0; */
     if (!_glfw.ns.unicodeData) {
         // Using the cocoa API for key handling is disabled, as there is no
         // reliable way to handle dead keys using it. Only use it if the
@@ -857,25 +858,39 @@ is_ascii_control_char(char x) {
         if (window->ns.deadKeyState && (char_count == 0 || scancode == 0x75)) {
             // 0x75 is the delete key which needs to be ignored during a compose sequence
             debug_key(@"Ignoring dead key (text: %s).\n", format_text(_glfw.ns.text));
-            return;
+            /* return; */
         }
     }
     if (is_ascii_control_char(_glfw.ns.text[0])) _glfw.ns.text[0] = 0;  // don't send text for ascii control codes
     debug_key(@"text: %s glfw_key: %s\n",
             format_text(_glfw.ns.text), _glfwGetKeyName(key));
     debug_key(@"marked text: %@", markedText);
-    if ([self hasMarkedText]) {
+
+    int text_len = strnlen(_glfw.ns.text, sizeof(_glfw.ns.text));
+    bool has_marked_text = [self hasMarkedText];
+
+    // If we now have both marked text and _glfw.ns.text,
+    // we treat _glfw.ns.text as marked text (pre-edit) too,
+    // without commiting them, until marked text become empty
+    if (has_marked_text) {
+        // temporary add marked text after _glfw.ns.text
+        strncpy(_glfw.ns.text + text_len, [[markedText string] UTF8String],
+                sizeof(_glfw.ns.text) - text_len);
         _glfwInputKeyboard(window, key, scancode, GLFW_PRESS, mods,
-                           [[markedText string] UTF8String], 1); // update pre-edit text
+                           _glfw.ns.text, 1); // update pre-edit text
+        _glfw.ns.text[text_len] = '\0'; // recover
+        return;
     } else if (previous_has_marked_text) {
         _glfwInputKeyboard(window, key, scancode, GLFW_PRESS, mods,
                            NULL, 1); // clear pre-edit text
-    }
-    if (([self hasMarkedText] || previous_has_marked_text) && !_glfw.ns.text[0]) {
-        // do not pass keys like BACKSPACE while there's pre-edit text, let IME handle it
-        return;
+        if (!_glfw.ns.text[0]) {
+            // do not pass keys like BACKSPACE while there was pre-edit text
+            // IME handled it
+            return;
+        }
     }
     _glfwInputKeyboard(window, key, scancode, GLFW_PRESS, mods, _glfw.ns.text, 0);
+    _glfw.ns.text[0] = '\0';
 }
 
 - (void)flagsChanged:(NSEvent *)event
